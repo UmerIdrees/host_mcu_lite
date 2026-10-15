@@ -1,0 +1,16 @@
+# stm32f767_rxe.resc -- Renode script connecting STM32F767ZI Ethernet to host tap0
+using sysbus
+
+$elf?=@renode/build/stm32f767zi/stm32f767zi_net_demo.elf
+
+# Load the base STM32F767ZI platform description
+i @renode/vendors/stm32f767zi/stm32f767zi.resc
+
+# Create a virtual switch and bridge the MAC to host tap0
+emulation CreateSwitch "net_switch"
+emulation CreateTap "tap0" "host_tap"
+connector Connect sysbus.ethernet net_switch
+connector Connect host.host_tap net_switch
+
+echo "STM32F767ZI network platform ready and bridged to tap0"
+start

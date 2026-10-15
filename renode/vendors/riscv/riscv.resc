@@ -1,0 +1,101 @@
+# riscv.resc -- Renode platform + firmware load for the GD32VF103-style RV32IMAC
+# vendor platform in the holoscan_mcu_lite multi-vendor harness.
+#
+# WHAT THIS IS
+#   128 KiB of flash at address 0, 32 KiB of SRAM at 0x20000000, one console
+#   UART and the LoadELF of this board's demo image. Deliberately NO network
+#   MAC, NO SDRAM and NO interrupt controller: this smoke test sends and
+#   receives nothing, no interrupt is ever taken, and the image's tick comes
+#   from the machine timer inside the CLINT, which IS modelled (see below).
+#
+# MEMORY MAP (kept in sync by renode/scripts/selfcheck_vendors.sh against
+# firmware/platform/gcc_riscv_hml_mcu.ld, firmware/platform/board_config.h and
+# the riscv row of renode/boards/index -- all four must agree or the
+# riscv_renode_selfcheck CTest test fails)
+#   0x00000000  128 KiB  FLASH   code, rodata, .data initialiser image
+#   0x20000000  32 KiB   SRAM    .data, .bss, stack, newlib heap
+#   0x40000000           UART0    the only peripheral (THR +0x00, LSR +0x05)
+#   0x02000000           CLINT    the machine timer ONLY: mtime low +0xBFF8,
+#                                 high +0xBFFC. No PLIC is wired, so no
+#                                 platform interrupt has anywhere to go.
+#
+# RESET IS FIRMWARE, NOT A VECTOR TABLE
+#   A RISC-V core has no vector table. Renode's default reset fetch lands at the
+#   start of flash (address 0, matching the linker script's FLASH ORIGIN, so a
+#   wrong board description would visibly fetch garbage rather than silently
+#   run code). startup_riscv.c then programs mtvec to its own trap entry. The
+#   `cpu VectorTableOffset 0x00000000` line below exists so selfcheck_vendors.sh
+#   has a concrete RISC-V statement to assert against the linker script; it is
+#   not a vector table offset in the Cortex-M sense.
+#
+# THE CPU AND THE CPUs MODEL
+#   CPU.RiscV32I is the base 32-bit RISC-V model and cpuType "rv32imac" asks for
+#   the multiply/divide and atomic extensions. Renode is not installed anywhere
+#   this matrix was written, so BOTH the model name and the cpuType string are
+#   transcribed from memory and flagged unverified; a Renode release that spells
+#   the core differently (for example CPU.RiscV32IMAC) must be reconciled here
+#   and only here, and the comment saying so must not be deleted.
+#
+# THE TICK
+#   The demo's cooperative RTOS shim ticks on the MMIO machine timer, read at
+#   +0xBFF8/+0xBFFC of 0x02000000 -- the offsets startup_riscv.c expects. If the
+#   model does not clock mtime, the shim's bounded spin budget kicks in and the
+#   image prints HML-MCU-DEMO-WARN with the pause fallback; the robot test does
+#   not forbid that line, exactly as it does not forbid it on the ARM rows.
+#
+# ABOUT THE UART MODEL NAME
+#   same decision and caveat as the microchip_sam and nxp_lpc rows: no
+#   GD32VF103 USART model exists to this harness, so UART.NS16550 is the
+#   stand-in and startup_riscv.c writes THR/LSR to match. The two halves agree,
+#   which is what lets the image print at all; the INTEGER and the 5-bit
+#   LSR/THR block are emphatically NOT the GD32 USART map, and both halves must
+#   change together before real silicon is involved.
+#
+# WHY THE HEAP IS IN SRAM AND SMALLER THAN EVERY OTHER ROW
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO buffers, i.e. 2 MiB of heap, which is why the BASE platform
+#   (renode/holoscan_mcu_lite.resc) needs its 4 MiB SDRAM window. This board is
+#   built with --frame-bytes 4096: 18 KiB of heap inside 32 KiB of SRAM, after a
+#   4 KiB stack. Same code paths, same checks, smaller frame cap.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform description HAS NEVER BEEN EXECUTED. The machine this matrix
+#   was written on has no Renode, no mono, no dotnet, no riscv32 toolchain, and
+#   github.com and downloads.renode.io are unreachable from it. Nothing here has
+#   been loaded by a Renode release, and no GD32VF103 data sheet was available.
+#   That is exactly why the CTest test that uses it exits 77 (skipped) when the
+#   tooling is missing. If the tooling IS present and the platform does not load,
+#   run_vendor_smoke.sh returns the emulator's non-zero exit and the test FAILS --
+#   loudly, and never as a pass that was not observed.
+
+:name: riscv
+:description: riscv vendor platform (GD32VF103-style RV32IMAC, flash @ 0x00000000, UART0 @ 0x40000000, CLINT mtime timer, 128 KiB flash, 32 KiB SRAM, no interrupt controller, no SDRAM). Emulator only; never executed; not silicon.
+
+$elf?=riscv_hml_mcu_demo.elf
+
+mach create "hml_riscv"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.RiscV32I @ sysbus
+    cpuType: "rv32imac"
+
+flash: Memory.MappedMemory @ sysbus 0x00000000
+    size: 0x20000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x8000
+
+uart: UART.NS16550 @ sysbus 0x40000000
+
+clint: IRQControllers.RiscVClint @ sysbus 0x02000000
+    -> cpu@0
+"""
+
+sysbus LoadELF $elf
+# No NVIC and no PLIC: the self-check treats the index row's uart_irq of "-"
+# and this file's silence about interrupts as the same fact.
+cpu VectorTableOffset 0x00000000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

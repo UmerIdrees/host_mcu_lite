@@ -1,0 +1,32 @@
+# Build directories
+build/
+build_asan/
+renode/build/
+bin/
+lib/
+
+# Test artifacts and emulator droppings
+logs/
+snapshots/
+*.log
+*.save
+log.html
+report.html
+robot_output.xml
+
+# Object and binary outputs
+*.o
+*.a
+*.so
+*.elf
+*.map
+
+# Editor and OS artifacts
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
+*.tmp
+*.bak

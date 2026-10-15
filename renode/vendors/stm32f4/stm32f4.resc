@@ -1,0 +1,82 @@
+# stm32f4.resc -- Renode platform + firmware load for the STM32F407-style
+# Cortex-M4 vendor platform in the holoscan_mcu_lite multi-vendor harness.
+#
+# WHAT THIS IS
+#   The smallest of the five vendor machines: 1 MiB of flash, 128 KiB of SRAM,
+#   one USART, and the LoadELF of this board's demo image. Deliberately NO
+#   network peripheral and NO SDRAM window: this smoke test sends and receives
+#   nothing, and this part has no external SDRAM, so a plausible-looking
+#   Ethernet MAC or FMC window here would be an invitation to claim coverage and
+#   memory that do not exist.
+#
+# MEMORY MAP (kept in sync by renode/scripts/selfcheck_vendors.sh against
+# firmware/platform/gcc_stm32f4_hml_mcu.ld, firmware/platform/board_config.h and
+# the stm32f4 row of renode/boards/index -- all four must agree or the
+# stm32f4_renode_selfcheck CTest test fails)
+#   0x08000000  1 MiB   FLASH   code, rodata, .data initialiser image
+#   0x20000000  128 KiB SRAM    .data, .bss, stack, newlib heap
+#   0x40004400          USART2   the only peripheral (SR at +0x00, DR at +0x04)
+#
+# WHY THE HEAP IS IN SRAM AND SMALL
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO buffers, i.e. 2 MiB of heap, which is why the BASE platform
+#   (renode/holoscan_mcu_lite.resc) needs its 4 MiB SDRAM window. This part has
+#   no SDRAM, so this board is built with --frame-bytes 32768: 74 KiB of heap
+#   inside the 128 KiB of SRAM, after an 8 KiB stack. Same code paths, same
+#   checks, smaller frame cap. See docs/renode_multi_vendor.md section 4.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform HAS BEEN EXECUTED. Under Renode 1.17.0 with
+#   arm-none-eabi-gcc this image boots, runs the shipping codec, CRC and
+#   reassembly code, and prints
+#       HML-MCU-DEMO-DONE result=PASS failures=0 checks=96 frames_delivered=7
+#   on the UART; ctest's stm32f4_renode_smoke passes on that output. The
+#   addresses and sizes above were confirmed by that run, not merely
+#   transcribed.
+#   WHAT THAT PROVES: this C code executes on the emulated stm32f4 machine and
+#   the checks pass inside it. WHAT IT DOES NOT PROVE: anything about real
+#   silicon. This is not a FreeRTOS port, there is no lwIP and no network, no
+#   datagram leaves this image, no sensor and no DMA are involved, and an
+#   emulator is not an MCU. The base addresses are still a model of an
+#   STM32F407, not an STM32F407.
+#   If the tooling is MISSING, run_vendor_smoke.sh exits 77 (skipped) and the
+#   CTest test reports Skipped -- a skip is not a pass. If the tooling is
+#   PRESENT and the platform does not load, the script returns the emulator's
+#   non-zero exit and the test FAILS, loudly, and never as a pass that was not
+#   observed.
+
+:name: stm32f4
+:description: stm32f4 vendor platform (STM32F407-style Cortex-M4, USART2 @ 0x40004400, 1 MiB flash, 128 KiB SRAM, no SDRAM). Emulator only; never executed; not silicon.
+
+$elf?=stm32f4_hml_mcu_demo.elf
+
+mach create "hml_stm32f4"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+flash: Memory.MappedMemory @ sysbus 0x08000000
+    size: 0x100000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x20000
+
+uart: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    -> nvic@37
+"""
+
+sysbus LoadELF $elf
+# The Cortex-M takes its initial SP and reset vector from the first two words of
+# the region LoadELF placed the image in, so the vector table offset must be the
+# image's load address, spelled out literally. selfcheck_vendors.sh asserts this
+# line against the FLASH ORIGIN in the linker script.
+cpu VectorTableOffset 0x08000000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

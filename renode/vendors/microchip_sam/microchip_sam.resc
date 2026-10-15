@@ -1,0 +1,98 @@
+# microchip_sam.resc -- Renode platform + firmware load for the SAME70-style
+# Cortex-M7 vendor platform in the holoscan_mcu_lite multi-vendor harness.
+#
+# WHAT THIS IS
+#   A 2 MiB flash mapped at 0x00400000, 384 KiB of SRAM at 0x20400000, one
+#   console UART and the LoadELF of this board's demo image. Deliberately NO
+#   network MAC, NO FMC (external SDRAM) and NO cache: this smoke test sends and
+#   receives nothing, and an FMC window here would be an invitation to claim
+#   memory the image is not built against.
+#
+# MEMORY MAP (kept in sync by renode/scripts/selfcheck_vendors.sh against
+# firmware/platform/gcc_microchip_sam_hml_mcu.ld, firmware/platform/
+# board_config.h and the microchip_sam row of renode/boards/index -- all four
+# must agree or the microchip_sam_renode_selfcheck CTest test fails)
+#   0x00400000  2 MiB   FLASH   code, rodata, .data initialiser image
+#   0x20400000  384 KiB SRAM    .data, .bss, stack, newlib heap
+#   0x400E0800          UART0    the only peripheral (THR +0x00, LSR +0x05)
+#
+# NEITHER ADDRESS IS A CANONICAL ARM ONE. Flash is not 0x08000000 and SRAM is
+# not 0x20000000. Both are written out in full here because this file is where
+# a plausible-looking copy-paste from a more familiar STM32-style map would
+# silently produce an image the emulated machine has no memory for.
+#
+# ABOUT THE CORTEX-M7
+#   cpuType is "cortex-m7" with nothing else enabled. No cache, no MPU, no FPU
+#   and no double-precision FP: the image is compiled -mfloat-abi=soft, enables
+#   no cache and configures no MPU. The platform model is thereby allowed to
+#   HAVE those features without the image touching them, which is the intended
+#   state. Turning a cache on inside this .resc would make the image behave
+#   DIFFERENTLY from every compile of it, so nobody should.
+#
+# ABOUT THE UART MODEL NAME
+#   No SAME70 UART model that this harness has ever seen exists to it and Renode
+#   is not installed anywhere this matrix was written, so this row asks for
+#   UART.NS16550 -- the same stand-in decision as the nxp_lpc row -- and
+#   firmware/platform/startup_microchip_sam.c writes that block THR/LSR to match.
+#   The two halves agree, which is what lets the image print at all; the base
+#   address is the SAME70's UART0, and the register block is emphatically NOT the
+#   SAME70 USART register map. Both halves must change together before real
+#   silicon is involved. The SAME70 UART0 interrupt line (recorded as 35) is a
+#   guess from the Harmony+ table; no data sheet was available to check it, and
+#   no run would notice a wrong value because the demo takes no interrupt.
+#
+# WHY THE HEAP IS IN SRAM AND SMALLER THAN THE BASE PLATFORM'S
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO buffers, i.e. 2 MiB of heap, which is why the BASE platform
+#   (renode/holoscan_mcu_lite.resc) needs its 4 MiB SDRAM window. This board is
+#   built with --frame-bytes 131072: 266 KiB of heap inside 384 KiB of SRAM,
+#   after an 8 KiB stack. Same code paths, same checks, smaller frame cap.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform description HAS NEVER BEEN EXECUTED. The machine this matrix
+#   was written on has no Renode, no mono, no dotnet, no arm-none-eabi-gcc, and
+#   github.com and downloads.renode.io are unreachable from it. Nothing here has
+#   been loaded by a Renode release, and no SAME70 data sheet was available to
+#   check the interrupt line against.
+#   That is exactly why the CTest test that uses it exits 77 (skipped) when the
+#   tooling is missing. If the tooling IS present and the platform does not load,
+#   run_vendor_smoke.sh returns the emulator's non-zero exit and the test FAILS --
+#   loudly, and never as a pass that was not observed.
+
+:name: microchip_sam
+:description: microchip_sam vendor platform (SAME70-style Cortex-M7, flash @ 0x00400000, UART0 @ 0x400E0800, 2 MiB flash, 384 KiB SRAM, no SDRAM, no cache). Emulator only; never executed; not silicon.
+
+$elf?=microchip_sam_hml_mcu_demo.elf
+
+mach create "hml_microchip_sam"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m7"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+flash: Memory.MappedMemory @ sysbus 0x00400000
+    size: 0x200000
+
+sram: Memory.MappedMemory @ sysbus 0x20400000
+    size: 0x60000
+
+uart: UART.NS16550 @ sysbus 0x400E0800
+    -> nvic@35
+"""
+
+sysbus LoadELF $elf
+# The Cortex-M takes its initial SP and reset vector from the first two words of
+# the region LoadELF placed the image in. On this part that is the start of the
+# 0x00400000 flash window, so the offset is written out literally even though it
+#   works out to zero: the point of writing it out is that selfcheck_vendors.sh
+#   can
+# assert the VectorTableOffset equals the linker script's FLASH ORIGIN.
+cpu VectorTableOffset 0x00400000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

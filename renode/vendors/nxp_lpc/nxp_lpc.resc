@@ -1,0 +1,99 @@
+# nxp_lpc.resc -- Renode platform + firmware load for the LPC4337-style
+# Cortex-M4 vendor platform in the holoscan_mcu_lite multi-vendor harness.
+#
+# WHAT THIS IS
+#   An XIP Cortex-M4: code executes in place out of the serial flash at
+#   0x1A000000, there is no boot copy and no separate load region, plus one
+#   console UART and the LoadELF of this board's demo image. Deliberately NO
+#   network peripheral and NO SDRAM window: this smoke test sends and receives
+#   nothing, and a plausible-looking Ethernet MAC or SDRAM window here would be
+#   an invitation to claim coverage and memory that do not exist.
+#
+# MEMORY MAP (kept in sync by renode/scripts/selfcheck_vendors.sh against
+# firmware/platform/gcc_nxp_lpc_hml_mcu.ld, firmware/platform/board_config.h and
+# the nxp_lpc row of renode/boards/index -- all four must agree or the
+# nxp_lpc_renode_selfcheck CTest test fails)
+#   0x1A000000  512 KiB FLASH   code, rodata, .data initialiser image, executed in place
+#   0x10000000  136 KiB SRAM    .data, .bss, stack, newlib heap
+#   0x400C1000          USART0   the only peripheral
+#
+# THIS IS THE ONLY ROW IN THE MATRIX WHOSE FLASH IS NOT AT AN ARM-ish ADDRESS
+#   0x1A000000 is where the LPC43xx runs from, so the reset vector table is at
+#   0x1A000000 and the VectorTableOffset below is spelled out literally rather
+#   than guessed from a monitor variable. selfcheck_vendors.sh asserts it equals
+#   the FLASH ORIGIN in the linker script.
+#
+# THE SRAM WINDOW IS A STATED SIMPLIFICATION
+#   136 KiB at 0x10000000 as ONE contiguous window. The real LPC4337 splits its
+#   SRAM across banks (UM10539); a linker script needs a contiguous region and
+#   the demo's heap has to live in one place, so this models the aggregate
+#   rather than claiming to be the part's real bank map. See board_config.h.
+#
+# WHY THE HEAP IS IN SRAM AND SMALL
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO buffers, i.e. 2 MiB of heap, which is why the BASE platform
+#   (renode/holoscan_mcu_lite.resc) needs its 4 MiB SDRAM window. This part has
+#   no SDRAM in this platform, so this board is built with --frame-bytes 32768:
+#   74 KiB of heap inside 136 KiB of SRAM, after an 8 KiB stack. Same code
+#   paths, same checks, smaller frame cap.
+#
+# ABOUT THE UART MODEL NAME -- THE MOST LIKELY THING TO BE WRONG HERE
+#   There is no LPC43xx USART model that this harness has ever seen, and Renode
+#   is not installed anywhere this matrix was written. So this row asks Renode
+#   for UART.NS16550 at the part's real USART0 base, and
+#   firmware/platform/startup_nxp_lpc.c writes the NS16550 register block to
+#   match. The two halves therefore agree and the run has a real chance of
+#   printing; what they do NOT agree with is the LPC silicon. That is stated in
+#   the startup file too, and it is the first thing to fix on a real bring-up:
+#   either find/write a real LPC USART model, or point both halves at the same
+#   register block you actually want.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform description HAS NEVER BEEN EXECUTED. The machine this matrix
+#   was written on has no Renode, no mono, no dotnet, no arm-none-eabi-gcc, and
+#   github.com and downloads.renode.io are unreachable from it. Nothing here has
+#   been loaded by a Renode release, no copy of UM10539 was available to check
+#   the addresses against, and the USART0 IRQ line below is the least confident
+#   number in the whole matrix (58; the demo takes no interrupt, so nothing in a
+#   run would notice either way -- which is why it is pinned in
+#   renode/boards/index and cross-checked rather than merely written down).
+#   That is exactly why the CTest test that uses it exits 77 (skipped) when the
+#   tooling is missing. If the tooling IS present and the platform does not
+#   load, run_vendor_smoke.sh returns the emulator's non-zero exit and the test
+#   FAILS -- loudly, and never as a pass that was not observed.
+
+:name: nxp_lpc
+:description: nxp_lpc vendor platform (LPC4337-style Cortex-M4, XIP flash @ 0x1A000000, USART0 @ 0x400C1000, 512 KiB flash, 136 KiB SRAM, no SDRAM). Emulator only; never executed; not silicon.
+
+$elf?=nxp_lpc_hml_mcu_demo.elf
+
+mach create "hml_nxp_lpc"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+flash: Memory.MappedMemory @ sysbus 0x1A000000
+    size: 0x80000
+
+sram: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x22000
+
+uart: UART.NS16550 @ sysbus 0x400C1000
+    -> nvic@58
+"""
+
+sysbus LoadELF $elf
+# The Cortex-M takes its initial SP and reset vector from the first two words of
+# the region LoadELF placed the image in. On this board that is the XIP flash at
+# 0x1A000000, spelled out literally. selfcheck_vendors.sh asserts this line
+# against the FLASH ORIGIN in the linker script.
+cpu VectorTableOffset 0x1A000000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

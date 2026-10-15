@@ -1,0 +1,5 @@
+foreach(_d m0_m1 m2 m3 m4 m5_ports fuzz soak e2e_cpu matrix)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_d}/CMakeLists.txt)
+    add_subdirectory(${_d})
+  endif()
+endforeach()

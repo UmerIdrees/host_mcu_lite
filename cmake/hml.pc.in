@@ -1,0 +1,13 @@
+# Relocatable: derived from the .pc file's own location, so the file stays
+# correct for `cmake --install --prefix ...`, DESTDIR, and relocation.
+# <prefix>/lib/pkgconfig/hml.pc  ->  pcfiledir=<prefix>/lib/pkgconfig
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: @HML_PC_NAME@
+Description: Host MCU Lite - independent C sensor-bridge library (UDP T0 + experimental RoCEv2)
+Version: @HML_VERSION@
+Libs: @HML_PC_LIBS@
+Cflags: -I${includedir}

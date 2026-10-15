@@ -1,0 +1,59 @@
+# hml multi-vendor index -- the machine-checked manifest for renode/vendors/**
+#
+# WHAT THIS FILE IS
+#   One row per vendor platform. renode/scripts/selfcheck_vendors.sh parses this
+#   table and asserts that every field agrees with:
+#       renode/vendors/<vendor>/firmware/vendor.env      (the build's inputs)
+#       renode/vendors/<vendor>/firmware/platform/board_config.h
+#       renode/vendors/<vendor>/firmware/platform/<linker script>
+#       renode/vendors/<vendor>/<vendor>.resc           (the emulated memory map)
+#       renode/vendors/<vendor>/<vendor>.robot          (which .resc it loads)
+#   A disagreement in ANY of them is a non-zero exit from the self-check, so the
+#   table, the platform descriptions, the linker scripts, the firmware headers
+#   and the robot tests cannot drift apart silently.
+#
+# HOW TO ADD A VENDOR
+#   Add a row here first, then add the vendor directory, then run
+#   renode/scripts/selfcheck_vendors.sh and let it tell you what is missing.
+#
+# STATUS -- READ BEFORE QUOTING ANY ROW
+#   NONE OF THESE ROWS HAS EVER BEEN EXECUTED. The machine this matrix was
+#   written on has no Renode, no mono, no dotnet and no cross compiler, and
+#   downloads.renode.io and github.com are unreachable from it. Every row below
+#   describes what a real Renode + a real cross toolchain WILL be asked to do.
+#   No row is a measurement. See docs/renode_multi_vendor.md.
+#
+# FIELD NOTES
+#   uart_addr/uart_irq  the base and NVIC line from the part's data sheet, as
+#                       recorded here. The UART is the image's only output
+#                       peripheral and the demo takes NO interrupt, so uart_irq
+#                       is decoration: it is pinned here and cross-checked, and
+#                       nothing in this harness would notice if the number were
+#                       wrong. Treat a wrong uart_irq as "unverified", not "fine".
+#   uart_irq = "-"      no NVIC and no PLIC is wired at all. See
+#                       renode/vendors/riscv/README.md for why adding one would
+#                       trade a loadable platform for zero coverage.
+#   heap_addr/heap_bytes  where the linker script puts the newlib heap. Every row
+#                       here has heap_bytes == 2 * frame_bytes + 0x2800, because
+#                       hml_reasm_open() allocates the two buffers AND its own
+#                       reassembler context (sizeof = 9488 on 32-bit), and the
+#                       self-check proves that arithmetic (see HML_VENDOR_REASM_CTX_BYTES
+#                       in each board_config.h) and that heap_addr sits inside the
+#                       SRAM window.
+#   frame_bytes         the default --frame-bytes for this part. It is NOT 0 (the
+#                       library default of 1 MiB) on any row, because no part
+#                       here has the 2 MiB of external SDRAM the base platform
+#                       models. 0 would still work -- malloc would fail, the
+#                       image would print HML-MCU-DEMO-WARN and then FAIL -- but
+#                       it would be a pointless run.
+#   cross_prefix        the HML_CROSS_PREFIX a bring-up needs. The RISC-V row
+#                       needs a different one: it is a different ISA with a
+#                       different toolchain, and no single prefix builds both.
+#
+# vendor	machine	arch	elf	uart_addr	uart_irq	flash_addr	flash_bytes	sram_addr	sram_bytes	heap_addr	heap_bytes	frame_bytes	linker_script	startup	cross_prefix
+stm32f767zi	stm32f767zi	cortex-m7	stm32f767zi_hml_mcu_demo.elf	0x40004800	39	0x08000000	0x200000	0x20000000	0x80000	0x20000000	141312	65536	gcc_stm32f767zi_hml_mcu.ld	startup_stm32f767zi.c	arm-none-eabi-
+stm32f4	stm32f4	cortex-m4	stm32f4_hml_mcu_demo.elf	0x40004400	37	0x08000000	0x100000	0x20000000	0x20000	0x20000000	75776	32768	gcc_stm32f4_hml_mcu.ld	startup_stm32f4.c	arm-none-eabi-
+nxp_lpc	nxp_lpc	cortex-m4	nxp_lpc_hml_mcu_demo.elf	0x400C1000	58	0x1A000000	0x80000	0x10000000	0x22000	0x10000000	75776	32768	gcc_nxp_lpc_hml_mcu.ld	startup_nxp_lpc.c	arm-none-eabi-
+ti_tm4c	ti_tm4c	cortex-m4f	ti_tm4c_hml_mcu_demo.elf	0x4000C000	5	0x00000000	0x100000	0x20000000	0x40000	0x20000000	141312	65536	gcc_ti_tm4c_hml_mcu.ld	startup_ti_tm4c.c	arm-none-eabi-
+microchip_sam	microchip_sam	cortex-m7	microchip_sam_hml_mcu_demo.elf	0x400E0800	35	0x00400000	0x200000	0x20400000	0x60000	0x20400000	272384	131072	gcc_microchip_sam_hml_mcu.ld	startup_microchip_sam.c	arm-none-eabi-
+riscv	riscv	rv32imac	riscv_hml_mcu_demo.elf	0x40000000	-	0x00000000	0x20000	0x20000000	0x8000	0x20000000	18432	4096	gcc_riscv_hml_mcu.ld	startup_riscv.c	riscv32-unknown-elf-

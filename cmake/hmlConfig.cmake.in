@@ -1,0 +1,142 @@
+@PACKAGE_INIT@
+
+# hml -- Host MCU Lite, an independent C sensor-bridge library.
+# Public API: all headers under <prefix>/include/hml/*.h
+#
+# The package is a PARTITION: each component is shipped as a static archive and
+# as a shared object, and you choose per link. See docs/final_partitioning.md.
+#
+#   hml::hml_protocol         codecs + CRCs                      (portless)
+#   hml::hml_core             framer, reassembly, latency        (portless)
+#   hml::hml_port_posix       hml_clock_us + hml_sock_*          (host only)
+#   hml::hml_control          beacon + control-plane codec/server
+#   hml::<component>_shared   the same, as libhml_<component>.so
+#
+# Two convenience aggregates, both plain INTERFACE targets:
+#   hml::hml_firmware         protocol + core and NOT ONE socket call. For
+#                             bare-metal and RTOS, where you implement the port.
+#   hml::hml_shared           the whole shared arm, for a host application.
+#
+# Components:  find_package(hml COMPONENTS core posix control shared transport)
+#   core      (default) hml::hml_protocol + hml::hml_core
+#   posix     hml::hml_port_posix            -- absent in an HML_NO_POSIX install
+#   control   hml::hml_control
+#   shared    hml::hml_core_shared           -- absent in an HML_BUILD_SHARED=OFF install
+#   transport hml::hml_udp, hml::hml_rocev2   -- only in an HML_INSTALL_TRANSPORTS install
+#   firmware  hml::hml_firmware               -- always present
+#
+# Embedded installs: set this BEFORE find_package and hml will not append the
+# POSIX port to hml::hml_core, so your firmware links only the portable arms:
+#   set(hml_NO_DEFAULT_PORT TRUE)
+#   find_package(hml CONFIG REQUIRED)
+
+include(CMakeFindDependencyMacro)
+
+# Both export sets are optional: -DHML_BUILD_STATIC=OFF and/or
+# -DHML_BUILD_SHARED=OFF install only one of them, and an unconditional include()
+# of a missing file would fail every consumer of that install.
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/hmlTargets.cmake")
+  include("${CMAKE_CURRENT_LIST_DIR}/hmlTargets.cmake")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/hmlSharedTargets.cmake")
+  include("${CMAKE_CURRENT_LIST_DIR}/hmlSharedTargets.cmake")
+endif()
+
+# Consumers link hml::hml_core, which already carries hml::hml_protocol.
+# The socket/clock implementation is a separate target so an embedded consumer
+# can substitute its own port; on a POSIX host build, append it so the
+# installed library is usable out of the box.
+# NOTE: append, never overwrite -- overwriting drops hml::hml_protocol and the
+# consumer fails to link hml_crc16.
+# hml_NO_DEFAULT_PORT (set by the consumer before find_package) suppresses this
+# for a firmware build, and is the only supported way to get the portless
+# hml::hml_core back out of a default install.
+if(UNIX AND NOT APPLE AND NOT hml_NO_DEFAULT_PORT)
+  foreach(_pair "hml::hml_core;hml::hml_port_posix" "hml::hml_core_shared;hml::hml_port_posix_shared")
+    list(GET _pair 0 _core)
+    list(GET _pair 1 _posix)
+    if(TARGET ${_core} AND TARGET ${_posix})
+      get_target_property(_libs ${_core} INTERFACE_LINK_LIBRARIES)
+      if(NOT _libs)
+        set(_libs "")
+      endif()
+      if(NOT "${_posix}" IN_LIST _libs)
+        list(APPEND _libs ${_posix})
+        set_target_properties(${_core} PROPERTIES INTERFACE_LINK_LIBRARIES "${_libs}")
+      endif()
+      unset(_libs)
+    endif()
+  endforeach()
+  unset(_pair)
+  unset(_core)
+  unset(_posix)
+endif()
+
+# ---- aggregate (INTERFACE) targets ---------------------------------------
+if(NOT TARGET hml::hml_firmware)
+  add_library(hml::hml_firmware INTERFACE IMPORTED)
+  set_target_properties(hml::hml_firmware PROPERTIES
+    INTERFACE_LINK_LIBRARIES "hml::hml_protocol;hml::hml_core")
+endif()
+if(NOT TARGET hml::hml_firmware_shared)
+  add_library(hml::hml_firmware_shared INTERFACE IMPORTED)
+  set_target_properties(hml::hml_firmware_shared PROPERTIES
+    INTERFACE_LINK_LIBRARIES "hml::hml_protocol_shared;hml::hml_core_shared")
+endif()
+if(NOT TARGET hml::hml_shared)
+  add_library(hml::hml_shared INTERFACE IMPORTED)
+  set(_hml_shared_libs "")
+  foreach(_t hml::hml_core_shared hml::hml_protocol_shared
+              hml::hml_control_shared hml::hml_port_posix_shared)
+    if(TARGET ${_t})
+      list(APPEND _hml_shared_libs ${_t})
+    endif()
+  endforeach()
+  set_target_properties(hml::hml_shared PROPERTIES
+    INTERFACE_LINK_LIBRARIES "${_hml_shared_libs}")
+  unset(_hml_shared_libs)
+  unset(_t)
+endif()
+
+# ---- component bookkeeping for check_required_components() ---------------
+set(hml_core_FOUND FALSE)
+if(TARGET hml::hml_core AND TARGET hml::hml_protocol)
+  set(hml_core_FOUND TRUE)
+endif()
+set(hml_posix_FOUND FALSE)
+if(TARGET hml::hml_port_posix)
+  set(hml_posix_FOUND TRUE)
+endif()
+set(hml_control_FOUND FALSE)
+if(TARGET hml::hml_control)
+  set(hml_control_FOUND TRUE)
+endif()
+set(hml_shared_FOUND FALSE)
+if(TARGET hml::hml_core_shared)
+  set(hml_shared_FOUND TRUE)
+endif()
+set(hml_transport_FOUND FALSE)
+if(TARGET hml::hml_udp AND TARGET hml::hml_rocev2)
+  set(hml_transport_FOUND TRUE)
+endif()
+set(hml_firmware_FOUND TRUE)
+
+# Reject a component name this install does not know about, with a message that
+# says which of the three build options would have produced it.
+foreach(_c IN LISTS hml_FIND_COMPONENTS)
+  if(NOT DEFINED hml_${_c}_FOUND)
+    message(FATAL_ERROR
+      "hml: unknown package component '${_c}'. Known components: "
+      "core, posix, control, shared, transport, firmware. "
+      "This install has posix=${hml_posix_FOUND} shared=${hml_shared_FOUND} "
+      "transport=${hml_transport_FOUND} (configure with HML_NO_POSIX=OFF, "
+      "HML_BUILD_SHARED=ON, HML_INSTALL_TRANSPORTS=ON to get them).")
+  endif()
+endforeach()
+unset(_c)
+
+# hml has no optional dependencies; the macro is included for the contract.
+find_dependency(Threads QUIET)
+
+check_required_components(hml)

@@ -1,0 +1,16 @@
+# The bare-metal / RTOS variant of hml.pc: the two portable components only
+# (hml_protocol + hml_core). Nothing here opens a socket. Link this AFTER your
+# own port, which must define hml_clock_us() and the five hml_sock_*() calls --
+# see include/hml/hml_partition.h and docs/final_partitioning.md.
+#
+# Relocatable: derived from the .pc file's own location.
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: @HML_PC_NAME@
+Description: Host MCU Lite - portable codec/core components for firmware; you supply the clock and the sockets
+Version: @HML_VERSION@
+Libs: @HML_PC_LIBS@
+Cflags: -I${includedir}

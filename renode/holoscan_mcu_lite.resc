@@ -1,0 +1,81 @@
+# holoscan_mcu_lite.resc -- Renode platform + firmware load for the MCU smoke
+# test.
+#
+# WHAT THIS IS
+#   A minimal Cortex-M4 machine with a USART, flash, internal SRAM and an
+#   external SDRAM window, plus the LoadELF of the demo image. It exists to give
+#   the demo's UART output somewhere to go and to give its 2 MiB of reassembly
+#   heap somewhere to live. It is not a model of any specific silicon part and
+#   it deliberately contains NO network peripheral: this smoke test sends and
+#   receives nothing, so a plausible-looking Ethernet MAC here would be an
+#   invitation to claim coverage that does not exist.
+#
+# MEMORY MAP (kept in sync with platform/gcc_arm_hml_mcu.ld)
+#   0x08000000  2 MiB  FLASH    code, rodata, .data initialiser image
+#   0x20000000  512 KiB SRAM     stack, .data, .bss
+#   0x60000000  4 MiB  SDRAM    the newlib heap -- see the note below
+#   0x40004400          USART2   the only peripheral
+#
+# WHY THERE IS AN SDRAM WINDOW
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO 1 MiB buffers, so the image needs 2 MiB of heap. No small
+#   Cortex-M has that in internal SRAM, so the heap goes in an external-SDRAM
+#   window at 0x60000000, which is what a part with SDRAM behind an FMC maps
+#   there. On real silicon that window needs an FMC configuration, a refresh
+#   timer, pin muxing and a cache/MPU policy before the first allocation;
+#   none of that exists here, because the emulated platform has no SDRAM
+#   controller to initialise. A part without SDRAM must be built with
+#   --frame-bytes, which passes a smaller cap to hml_reasm_open() and changes
+#   nothing about which code paths run.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform description, like the robot test that drives it, HAS NEVER
+#   BEEN EXECUTED. The machine this harness was written on has no Renode, no
+#   mono, no dotnet and no arm-none-eabi-gcc, so nothing here has been run
+#   against a real Renode. That is exactly why the CTest test that uses it
+#   exits 77 (skipped) rather than passing when the tooling is missing.
+#   Where the peripheral model name or a register offset might differ between
+#   Renode versions, the failure mode is a LOUD one: run_smoke.sh returns the
+#   emulator's non-zero exit, so the test FAILS. It can never report a pass
+#   that was not observed. If you have Renode and the platform does not load,
+#   fix it here and say so in docs/renode.md -- do not paper over it.
+
+:name: holoscan_mcu_lite
+:description: holoscan_mcu_lite MCU smoke platform (Cortex-M4, USART, 2 MiB flash, 512 KiB SRAM, 4 MiB SDRAM window). Emulator only; not silicon.
+
+$elf?=hml_mcu_demo.elf
+
+mach create "hml_mcu"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+flash: Memory.MappedMemory @ sysbus 0x08000000
+    size: 0x200000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x80000
+
+sdram: Memory.MappedMemory @ sysbus 0x60000000
+    size: 0x400000
+
+uart: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    -> nvic@37
+"""
+
+sysbus LoadELF $elf
+# The Cortex-M takes its initial SP and reset vector from the first two words of
+# the region LoadELF placed the image in, so the vector table offset must be the
+# image's load address, spelled out literally: a monitor variable that happens to
+# hold the text "0x08000000" is not guaranteed to be parsed as a number here, and
+# a wrong value would be a silent vector fetch from 0.
+cpu VectorTableOffset 0x08000000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

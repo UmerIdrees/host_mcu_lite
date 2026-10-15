@@ -1,0 +1,98 @@
+# ti_tm4c.resc -- Renode platform + firmware load for the TM4C1294-style
+# Cortex-M4F vendor platform in the holoscan_mcu_lite multi-vendor harness.
+#
+# WHAT THIS IS
+#   A 1 MiB flash mapped at address 0, 256 KiB of SRAM, one console UART and the
+#   LoadELF of this board's demo image. Deliberately NO network peripheral and NO
+#   SDRAM window: this smoke test sends and receives nothing, and this part has
+#   no external SDRAM in this platform, so a plausible-looking Ethernet MAC or SDRAM
+#   window here would be an invitation to claim coverage and memory that do not
+#   exist.
+#
+# MEMORY MAP (kept in sync by renode/scripts/selfcheck_vendors.sh against
+# firmware/platform/gcc_ti_tm4c_hml_mcu.ld, firmware/platform/board_config.h and
+# the ti_tm4c row of renode/boards/index -- all four must agree or the
+# ti_tm4c_renode_selfcheck CTest test fails)
+#   0x00000000  1 MiB   FLASH   code, rodata, .data initialiser image
+#   0x20000000  256 KiB SRAM    .data, .bss, stack, newlib heap
+#   0x4000C000          UART0    the only peripheral (data +0x00, flags +0x18)
+#
+# THIS IS THE ONLY ROW IN THE MATRIX WITH FLASH AT ADDRESS ZERO
+#   The TM4C1294 boots from 0, so the reset vector table is at 0 and the
+#   VectorTableOffset below is spelled out literally. That matters more here than
+#   on the other rows: an image entered at the wrong address would land in code
+#   rather than in obviously empty space, which is the quietest way to fail.
+#   selfcheck_vendors.sh asserts that line equals the FLASH ORIGIN in the linker
+#   script.
+#
+# ABOUT THE FPU
+#   cpuType is "cortex-m4f" because that is what the part is and the platform
+#   model is allowed to have an FPU. The firmware is compiled -mfloat-abi=soft
+#   and contains no FP instruction: nothing in this harness needs one, and
+#   enabling CPACR is startup-file work. An FPU in the model that the image never
+#   touches is the intended state.
+#
+# ABOUT THE UART MODEL NAME
+#   The TM4C UART is a TI Stellaris PL411. There is no TM4C UART model that this
+#   harness has ever seen and Renode is not installed anywhere this matrix was
+#   written, so this row asks for UART.PL011, whose register block (data at +0x00,
+#   flags at +0x18, TXFF as bit 5) is the closest match available, and
+#   firmware/platform/startup_ti_tm4c.c writes that block to match. The two halves
+#   agree, which is what lets the image print at all; they have NOT been verified
+#   against a data sheet or a Renode release. If a real TM4C model turns up,
+#   change both halves.
+#
+# WHY THE HEAP IS IN SRAM AND SMALL
+#   hml_reasm_open(&r, 0) uses the library default frame size of 1 MiB and
+#   mallocs TWO buffers, i.e. 2 MiB of heap, which is why the BASE platform
+#   (renode/holoscan_mcu_lite.resc) needs its 4 MiB SDRAM window. This board is
+#   built with --frame-bytes 65536: 138 KiB of heap inside 256 KiB of SRAM, after
+#   an 8 KiB stack. Same code paths, same checks, smaller frame cap.
+#
+# STATUS -- READ BEFORE TRUSTING THIS FILE
+#   This platform description HAS NEVER BEEN EXECUTED. The machine this matrix
+#   was written on has no Renode, no mono, no dotnet, no arm-none-eabi-gcc, and
+#   github.com and downloads.renode.io are unreachable from it. Nothing here has
+#   been loaded by a Renode release, and no TM4C1294 data sheet was available to
+#   check the interrupt line (5) against.
+#   That is exactly why the CTest test that uses it exits 77 (skipped) when the
+#   tooling is missing. If the tooling IS present and the platform does not load,
+#   run_vendor_smoke.sh returns the emulator's non-zero exit and the test FAILS --
+#   loudly, and never as a pass that was not observed.
+
+:name: ti_tm4c
+:description: ti_tm4c vendor platform (TM4C1294-style Cortex-M4F, flash @ 0x00000000, UART0 @ 0x4000C000, 1 MiB flash, 256 KiB SRAM, no SDRAM). Emulator only; never executed; not silicon.
+
+$elf?=ti_tm4c_hml_mcu_demo.elf
+
+mach create "hml_ti_tm4c"
+machine LoadPlatformDescriptionFromString
+"""
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4f"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+flash: Memory.MappedMemory @ sysbus 0x00000000
+    size: 0x100000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x40000
+
+uart: UART.PL011 @ sysbus 0x4000C000
+    -> nvic@5
+"""
+
+sysbus LoadELF $elf
+# The Cortex-M takes its initial SP and reset vector from the first two words of
+# the region LoadELF placed the image in. On this part that is address 0, so the
+# offset is the literal 0x00000000 -- written out rather than left as 0 so that
+# selfcheck_vendors.sh has something specific to assert against the linker
+# script's FLASH ORIGIN.
+cpu VectorTableOffset 0x00000000
+
+# No showAnalyzer: under renode-test --console the UART is captured by the robot
+# file's Create Terminal Tester, and an interactive analyzer window would only
+# add a way for the run to fail for a non-code reason.

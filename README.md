@@ -336,8 +336,15 @@ reuses the same framing but has no room for flags, so the frame is closed by one
 
 ---
 
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+---
+
 ## Trademark & Project Disclaimer
 
 NVIDIA, Holoscan, and ConnectX are trademarks or registered trademarks of NVIDIA Corporation.
 This project (**Host MCU Lite**) is an independent open-source library and is not affiliated with,
 sponsored by, or endorsed by NVIDIA Corporation.
+
